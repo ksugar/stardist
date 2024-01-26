@@ -13,27 +13,29 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-        python-version: ['3.6', '3.7', '3.8', '3.9', '3.10']
+        os: [ubuntu-20.04, windows-latest, macos-latest]
+        python-version: ['3.6', '3.7', '3.8', '3.9', '3.10', '3.11']
         tensorflow: [1, 2]
         exclude:
-            # https://www.tensorflow.org/install/pip#system-requirements
+            # https://www.tensorflow.org/install/source#tested_build_configurations
           - python-version: '3.8'
             tensorflow: 1
           - python-version: '3.9'
             tensorflow: 1
           - python-version: '3.10'
             tensorflow: 1
+          - python-version: '3.11'
+            tensorflow: 1
           - os: windows-latest
             tensorflow: 1
 
     steps:
-      - uses: actions/setup-python@v2
+      - uses: actions/setup-python@v4
         with:
           python-version: ${{ matrix.python-version }}
       - run: python -m pip install --upgrade pip wheel setuptools
       - run: pip install "tensorflow==${{ matrix.tensorflow }}.*"
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v3
 
       - if: matrix.tensorflow == 1
         run: echo "package_extras=test,tf1" >> $GITHUB_ENV
@@ -47,7 +49,16 @@ jobs:
         run: pip install edt "numpy>=1.20"
 
       - name: Install package from source (just to test wheel building)
+        if: startsWith(matrix.os, 'windows') == false
         run: pip install --no-binary stardist "stardist[${{env.package_extras}}]"
+
+      - name: Install package from source (just to test wheel building) - Windows
+        if: startsWith(matrix.os, 'windows')
+        run: pip install --no-binary stardist "stardist[${{env.package_extras}}]"
+        env:  # cf. https://github.com/pypa/pip/issues/11231
+          TEMP: "/tmp"    # notes:
+          TMPDIR: "/tmp"  # - /tmp should already exist on runner image
+          TMP: "/tmp"     # - set all temp-related env variables (had issues with when omitting some)
 
       - name: Install package from wheel
         run: |
@@ -56,8 +67,13 @@ jobs:
 
       - name: Install bioimage.io dependencies
         if: |
-          matrix.python-version >= 3.7 &&
+          matrix.python-version == 3.7 &&
           matrix.tensorflow == 1
         run: pip install "stardist[bioimageio]"
 
-      - run: pytest -v --durations=50 -m "not gpu"
+      - name: Disable PytestReturnNotNoneWarning (Python 3.7+)
+        if: matrix.python-version != 3.6
+        run: echo "PYTEST_ADDOPTS='-W ignore::pytest.PytestReturnNotNoneWarning'" >> $GITHUB_ENV
+        shell: bash
+
+      - run: pytest -m "not gpu"
